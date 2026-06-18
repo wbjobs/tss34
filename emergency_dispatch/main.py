@@ -260,9 +260,9 @@ def main():
     )
     parser.add_argument(
         "--solver",
-        choices=["milp", "ga", "both"],
+        choices=["milp", "ga", "both", "compare-ga"],
         default="milp",
-        help="求解方法: milp=精确求解, ga=遗传算法, both=两者对比",
+        help="求解方法: milp=精确求解, ga=遗传算法, both=两者对比, compare-ga=新旧GA对比",
     )
     parser.add_argument(
         "--generations",
@@ -287,6 +287,45 @@ def main():
         type=float,
         default=120.0,
         help="MILP求解时间限制(秒) (默认120)",
+    )
+    parser.add_argument(
+        "--no-niche",
+        action="store_true",
+        help="关闭小生境技术 (用于对比测试)",
+    )
+    parser.add_argument(
+        "--no-adaptive-mutation",
+        action="store_true",
+        help="关闭自适应变异 (用于对比测试)",
+    )
+    parser.add_argument(
+        "--no-phenotype-distance",
+        action="store_true",
+        help="关闭表现型距离，改用基因型距离 (用于对比测试)",
+    )
+    parser.add_argument(
+        "--niche-radius",
+        type=float,
+        default=0.25,
+        help="小生境半径 (默认0.25，只惩罚高度相似的个体)",
+    )
+    parser.add_argument(
+        "--niche-strength",
+        type=float,
+        default=0.3,
+        help="小生境惩罚强度 (默认0.3，值越大惩罚越重)",
+    )
+    parser.add_argument(
+        "--mutation-init",
+        type=float,
+        default=0.35,
+        help="自适应变异初始率 (默认0.35)",
+    )
+    parser.add_argument(
+        "--mutation-final",
+        type=float,
+        default=0.08,
+        help="自适应变异最终率 (默认0.08)",
     )
 
     args = parser.parse_args()
@@ -323,7 +362,23 @@ def main():
         print()
 
     if args.solver in ("ga", "both"):
-        print(f"[GA] 遗传算法求解中 (种群={args.population}, 代数={args.generations})...")
+        niche_enabled = not args.no_niche
+        adaptive_enabled = not args.no_adaptive_mutation
+        phenotype_enabled = not args.no_phenotype_distance
+        mode_desc = []
+        if niche_enabled:
+            mode_desc.append("小生境开")
+        else:
+            mode_desc.append("小生境关")
+        if adaptive_enabled:
+            mode_desc.append("自适应变异开")
+        else:
+            mode_desc.append("自适应变异关")
+        if phenotype_enabled:
+            mode_desc.append("表现型距离")
+        else:
+            mode_desc.append("基因型距离")
+        print(f"[GA] 遗传算法求解中 (种群={args.population}, 代数={args.generations}, {', '.join(mode_desc)})...")
         ga_solver = GASolver(
             warehouses=warehouses,
             disasters=disasters,
@@ -331,12 +386,102 @@ def main():
             population_size=args.population,
             generations=args.generations,
             seed=args.seed,
+            niche_enabled=niche_enabled,
+            niche_radius=args.niche_radius,
+            niche_penalty_strength=args.niche_strength,
+            adaptive_mutation=adaptive_enabled,
+            use_phenotype_distance=phenotype_enabled,
+            mutation_initial_rate=args.mutation_init,
+            mutation_final_rate=args.mutation_final,
         )
         ga_result = ga_solver.solve(verbose=True)
         results.append(("GA", ga_result))
         print(f"   求解完成! 耗时 {ga_result.solve_time_seconds:.2f}s, "
               f"成本 {ga_result.total_cost:.2f}")
+        if niche_enabled or adaptive_enabled:
+            if ga_solver.diversity_history:
+                final_div = ga_solver.diversity_history[-1]
+                print(f"   最终种群: 平均距离={final_div.avg_distance:.3f}, "
+                      f"唯一染色体={final_div.unique_count}")
         print()
+
+    if args.solver == "compare-ga":
+        print("=" * 70)
+        print("  新旧 GA 对比测试 (相同种子和问题)")
+        print("=" * 70)
+        print()
+
+        configs = [
+            ("GA(旧版-无改进)", False, False, False, 0.15),
+            ("GA(仅小生境)", True, False, True, 0.15),
+            ("GA(仅自适应变异)", False, True, True, 0.35),
+            ("GA(新版-两者都开)", True, True, True, 0.35),
+        ]
+
+        all_results = []
+        all_solvers = []
+
+        for name, niche_on, adapt_on, pheno_on, mut_rate in configs:
+            print(f"[{name}] 求解中...")
+            solver = GASolver(
+                warehouses=warehouses,
+                disasters=disasters,
+                subway=subway,
+                population_size=args.population,
+                generations=args.generations,
+                seed=args.seed,
+                niche_enabled=niche_on,
+                adaptive_mutation=adapt_on,
+                use_phenotype_distance=pheno_on,
+                base_mutation_rate=mut_rate,
+                mutation_initial_rate=args.mutation_init,
+                mutation_final_rate=args.mutation_final,
+                niche_radius=args.niche_radius,
+                niche_penalty_strength=args.niche_strength,
+            )
+            result = solver.solve(verbose=True)
+            all_results.append((name, result, solver))
+            print(f"   完成! 成本={result.total_cost:.2f}, 耗时={result.solve_time_seconds:.2f}s")
+            if solver.diversity_history:
+                init_div = solver.diversity_history[0]
+                final_div = solver.diversity_history[-1]
+                print(f"   多样性: 初始 avg_dist={init_div.avg_distance:.3f}, unique={init_div.unique_count}")
+                print(f"            最终 avg_dist={final_div.avg_distance:.3f}, unique={final_div.unique_count}")
+            print()
+
+        print("=" * 70)
+        print("  汇总对比")
+        print("=" * 70)
+        print(f"  {'方法':<22} {'总成本':>12} {'总时间(h)':>12} {'求解耗时(s)':>12} "
+              f"{'初始多样性':>12} {'最终多样性':>12}")
+        print(f"  {'-'*84}")
+        best_cost = min(r[1].total_cost for r in all_results)
+        for name, result, solver in all_results:
+            init_avg = solver.diversity_history[0].avg_distance if solver.diversity_history else 0
+            final_avg = solver.diversity_history[-1].avg_distance if solver.diversity_history else 0
+            cost = result.total_cost
+            marker = "  *" if abs(cost - best_cost) < 0.01 else ""
+            print(f"  {name:<22} {cost:>12.2f}{marker} {result.total_time:>12.2f} "
+                  f"{result.solve_time_seconds:>12.2f} {init_avg:>12.3f} {final_avg:>12.3f}")
+
+        best_name, best_result, _ = min(all_results, key=lambda x: x[1].total_cost)
+        worst_name, worst_result, _ = max(all_results, key=lambda x: x[1].total_cost)
+        improvement = (worst_result.total_cost - best_result.total_cost) / worst_result.total_cost * 100
+        print(f"\n  最佳方法: {best_name} (成本 {best_result.total_cost:.2f})")
+        print(f"  最差方法: {worst_name} (成本 {worst_result.total_cost:.2f})")
+        print(f"  改进幅度: {improvement:+.1f}%")
+        print(f"\n  多样性分析:")
+        for name, result, solver in all_results:
+            if solver.diversity_history:
+                init_unique = solver.diversity_history[0].unique_count
+                final_unique = solver.diversity_history[-1].unique_count
+                drop = (init_unique - final_unique) / init_unique * 100
+                print(f"    {name}: 唯一染色体数 {init_unique} -> {final_unique} (下降 {drop:.0f}%)")
+        print("=" * 70)
+        print()
+
+        _, best_result, best_solver = min(all_results, key=lambda x: x[1].total_cost)
+        results.append(("Best GA", best_result))
 
     for name, result in results:
         title = f"{'='*20} {name} 求解结果 {'='*20}"
