@@ -639,14 +639,22 @@ class GASolver:
 
         return new_pop, new_fit
 
-    def solve(self, verbose: bool = False) -> SolverResult:
+    def solve(self, verbose: bool = False,
+              initial_population: Optional[List[Chromosome]] = None) -> SolverResult:
         start_time = time.time()
 
         self.diversity_history.clear()
         self.raw_fitness_history.clear()
         self.shared_fitness_history.clear()
+        self._last_best_chromosome = None
 
         population = [self._random_chromosome() for _ in range(self.population_size)]
+        if initial_population:
+            for i, ch in enumerate(initial_population):
+                if i < len(population) and len(ch.genes) == len(self.demands):
+                    for g in ch.genes:
+                        g.demand_idx = min(g.demand_idx, len(self.demands) - 1)
+                    population[i] = ch
         raw_fitnesses = [self._evaluate_raw(ch) for ch in population]
 
         dist_matrix = _compute_pairwise_distances(
@@ -770,6 +778,7 @@ class GASolver:
                 total_cost_with_penalty += self.unmet_penalty * qty
 
         solve_time = time.time() - start_time
+        self._last_best_chromosome = best_chrom
 
         return SolverResult(
             plan=plan,
@@ -780,3 +789,6 @@ class GASolver:
             is_optimal=False,
             unmet_demands=unmet,
         )
+
+    def _best_chromosome_from_result(self, result: SolverResult) -> Optional[Chromosome]:
+        return getattr(self, '_last_best_chromosome', None)

@@ -18,6 +18,8 @@ from .models import (
 from .milp_solver import MILPSolver
 from .ga_solver import GASolver
 from .report import generate_report
+from .dynamic_env import DynamicEnvironment
+from .incremental_solver import run_dynamic_simulation
 
 
 def build_small_problem() -> Tuple[List[Warehouse], List[DisasterPoint], SubwayNetwork]:
@@ -260,9 +262,27 @@ def main():
     )
     parser.add_argument(
         "--solver",
-        choices=["milp", "ga", "both", "compare-ga"],
+        choices=["milp", "ga", "both", "compare-ga", "dynamic-milp", "dynamic-ga"],
         default="milp",
-        help="求解方法: milp=精确求解, ga=遗传算法, both=两者对比, compare-ga=新旧GA对比",
+        help="求解方法: milp=精确, ga=遗传, both=对比, compare-ga=GA对比, dynamic-milp/ga=动态模拟",
+    )
+    parser.add_argument(
+        "--sim-hours",
+        type=float,
+        default=4.0,
+        help="动态模拟总时长(小时, 默认4.0)",
+    )
+    parser.add_argument(
+        "--event-interval",
+        type=float,
+        default=10.0,
+        help="动态事件间隔(分钟, 默认10.0)",
+    )
+    parser.add_argument(
+        "--milp-time-limit",
+        type=float,
+        default=30.0,
+        help="增量MILP单次求解时间上限(秒, 默认30)",
     )
     parser.add_argument(
         "--generations",
@@ -482,6 +502,35 @@ def main():
 
         _, best_result, best_solver = min(all_results, key=lambda x: x[1].total_cost)
         results.append(("Best GA", best_result))
+
+    if args.solver in ("dynamic-milp", "dynamic-ga"):
+        dyn_solver = "milp" if args.solver == "dynamic-milp" else "ga"
+        print(f"[动态] 启动动态应急物资调度模拟 (求解器: {dyn_solver.upper()})")
+        print(f"[动态] 初始规模: {len(warehouses)} 仓库, {len(disasters)} 灾情点")
+        print(f"[动态] 模拟时长: {args.sim_hours:.1f}h, 事件间隔: {args.event_interval:.0f}分钟")
+        print()
+
+        env = DynamicEnvironment(
+            initial_warehouses=warehouses,
+            initial_disasters=disasters,
+            subway_network=subway,
+            event_interval_minutes=args.event_interval,
+            total_simulation_hours=args.sim_hours,
+            new_disaster_probability=0.5,
+            seed=args.seed,
+        )
+
+        summary = run_dynamic_simulation(
+            env=env,
+            solver_type=dyn_solver,
+            event_interval_minutes=args.event_interval,
+            milp_time_limit=args.milp_time_limit,
+            ga_generations=args.generations // 3 if args.generations > 60 else args.generations,
+            ga_population=args.population,
+            seed=args.seed,
+            verbose=True,
+        )
+        return
 
     for name, result in results:
         title = f"{'='*20} {name} 求解结果 {'='*20}"

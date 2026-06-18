@@ -16,6 +16,20 @@ from .models import (
 from .milp_solver import MILPSolver
 from .ga_solver import GASolver
 from .report import generate_report
+from .dynamic_env import (
+    DisasterEvent,
+    DisasterState,
+    DynamicEnvironment,
+    EventType,
+    ExecutionState,
+)
+from .incremental_solver import (
+    IncrementalGASolver,
+    IncrementalMILPSolver,
+    ReplannerContext,
+    WarmStartValues,
+    run_dynamic_simulation,
+)
 
 __all__ = [
     "SupplyType",
@@ -34,4 +48,14 @@ __all__ = [
     "MILPSolver",
     "GASolver",
     "generate_report",
+    "EventType",
+    "DisasterEvent",
+    "DisasterState",
+    "ExecutionState",
+    "DynamicEnvironment",
+    "WarmStartValues",
+    "ReplannerContext",
+    "IncrementalMILPSolver",
+    "IncrementalGASolver",
+    "run_dynamic_simulation",
 ]
